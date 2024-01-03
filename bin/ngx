@@ -18,6 +18,8 @@ else
   touch "$NGX_CONFIG"
 fi
 
+NGX_VERSION=1.0.0
+
 printf_green() {
   echo -e "\033[0;32m$1\033[0m"
 }
@@ -553,6 +555,10 @@ update_self() {
   echo $(printf_green "Done.")
 }
 
+version() {
+  echo $NGX_VERSION
+}
+
 show_help() {
   echo "Usage of ngx:"
   echo "  list                            - Shows a list of all websites and their enabled/disabled status"
@@ -578,6 +584,7 @@ show_help() {
   echo "  update-self                     - Updates this tool using wget"
   echo "  help                            - Shows this help"
   echo "  completions                     - Generates completions for ngx"
+  echo "  version                         - Displays the current version of NGX" 
 }
 
 # If no arguments are given, list all sites
@@ -711,6 +718,11 @@ fi
 
 if [[ "$1" == "help" ]]; then
   show_help
+  exit 0
+fi
+
+if [[ "$1" == "version" ]]; then
+  version
   exit 0
 fi
 
