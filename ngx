@@ -1,0 +1,738 @@
+#!/bin/bash
+
+##################################
+# NGX tool developed by Lucasion #
+##################################
+NGX_CONFIG="$HOME/.ngx.conf"
+NGINX_DIR="/etc/nginx"
+NGINX_SITES_AVAILABLE="$NGINX_DIR/sites-available"
+NGINX_SITES_ENABLED="$NGINX_DIR/sites-enabled"
+VHOSTS="/var/www/vhosts"
+LOGS="/var/www/log"
+
+# If the config file exists, load it
+if [[ -f "$NGX_CONFIG" ]]; then
+  source "$NGX_CONFIG"
+else
+  # Create the config file
+  touch "$NGX_CONFIG"
+fi
+
+printf_green() {
+  echo -e "\033[0;32m$1\033[0m"
+}
+
+printf_red() {
+  echo -e "\033[0;31m$1\033[0m"
+}
+
+# Get a list of all the templates
+get_templates() {
+  local TEMPLATE_PATH="$NGINX_DIR/_templates"
+  if [[ ! -d "$TEMPLATE_PATH" ]]; then
+    sudo mkdir -p "$TEMPLATE_PATH"
+  fi
+  echo $(printf_green "Local templates:")
+  for template in $(ls $TEMPLATE_PATH); do
+    echo "\t$template"
+  done
+  echo $(printf_green "Online templates:")
+  local templateList="$(wget -q -O - https://tools.ionnet.io/data/ngx/templates.php)"
+  echo "$templateList"
+}
+
+# Checks if the site is enabled
+is_enabled() {
+  if [[ -f "$1" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# List all the sites in the sites-available directory, and whether they are enabled
+list_sites() {
+  for site in $(ls $NGINX_SITES_AVAILABLE); do
+    # print the site name and whether it is enabled
+    # enabled sites are printed in green
+    # disabled sites are printed in red
+    if [[ -f "$NGINX_SITES_ENABLED/$site" ]]; then
+      # echo -e "\033[0;32mEnabled \033[0m | $site"
+      echo -e "$(printf_green Enabled)  | $site"
+    else
+      # echo -e "\033[0;31mDisabled\033[0m | $site"
+      echo -e "$(printf_red Disabled) | $site"
+    fi
+  done
+}
+
+list_sites_raw() {
+  for site in $(ls $NGINX_SITES_AVAILABLE); do
+    # print the site name and whether it is enabled
+    # enabled sites are printed in green
+    # disabled sites are printed in red
+    echo "$site"
+  done
+}
+
+start_nginx() {
+  echo -e "\033[0;32mstarting nginx...\033[0m"
+  sudo service nginx start
+  echo -e "\033[0;32mDone.\033[0m"
+}
+
+restart_nginx() {
+  echo -e "\033[0;32mRestarting nginx...\033[0m"
+  sudo service nginx restart
+  echo -e "\033[0;32mDone.\033[0m"
+}
+
+reload_nginx() {
+  echo -e "\033[0;32mReloading nginx...\033[0m"
+  sudo service nginx reload
+  echo -e "\033[0;32mDone.\033[0m"
+}
+
+stop_nginx() {
+  echo -e "\033[0;32mStopping nginx...\033[0m"
+  sudo service nginx stop
+  echo -e "\033[0;32mDone.\033[0m"
+}
+
+get_ip() {
+  echo `hostname -I | awk '{print $1}'`
+}
+
+# Prompt nginx restart
+prompt_restart() {
+  local answer=
+  read -p "Restart nginx? [y/N]: " answer
+  if [[ $answer == "y" ]]; then
+    restart_nginx
+  fi
+}
+
+prompt_reload() {
+  local answer=
+  read -p "Reload nginx? [y/N]: " answer
+  if [[ $answer == "y" ]]; then
+    reload_nginx
+  fi
+}
+
+# Enable a website configuration
+enable() {
+  if [[ -f "$NGINX_SITES_ENABLED/$1" ]]; then
+    echo -e "\033[0;31mSite already enabled\033[0m"
+  elif [[ -f "$NGINX_SITES_AVAILABLE/$1" ]]; then
+    sudo ln -s "$NGINX_SITES_AVAILABLE/$1" "$NGINX_SITES_ENABLED/$1"
+    echo "Enabled $1"
+    prompt_reload
+  else
+    echo "Site \"$1\" not found"
+  fi
+}
+
+# Disable a website configuration
+disable() {
+  if [[ ! -f "$NGINX_SITES_ENABLED/$1" ]]; then
+    echo -e "\033[0;31mSite already disabled\033[0m"
+  elif [[ -f "$NGINX_SITES_ENABLED/$1" ]]; then
+    sudo rm "$NGINX_SITES_ENABLED/$1"
+    echo "Disabled $1"
+    prompt_reload
+  else
+    echo "Site \"$1\" not found"
+  fi
+}
+
+root() {
+  if [[ -f "$NGINX_SITES_AVAILABLE/$1" ]]; then
+    echo "$(grep -oP '(?<=root ).*?(?=;)' "$NGINX_SITES_AVAILABLE/$1")"
+    exit 0
+  fi
+  exit 1
+}
+
+edit() {
+  editor="$NGX_EDITOR"
+  if [[ -z "$editor" ]]; then
+    editor="$(which vim)"
+  fi
+  if [[ -z "$editor" ]]; then
+    editor="$(which nano)"
+  fi
+  if [[ -z "$editor" ]]; then
+    editor="$(which vi)"
+  fi
+  if [[ -z "$editor" ]]; then
+    echo "No editor found"
+    echo "Please edit the site configuration manually"
+    echo "Path: $NGINX_SITES_AVAILABLE/$1"
+    exit 1
+  fi 
+
+  if [[ -f "$NGINX_SITES_AVAILABLE/$1" ]]; then
+    "$editor" "$NGINX_SITES_AVAILABLE/$1"
+  else
+    echo "Site \"$1\" not found"
+  fi
+}
+
+where_site() {
+  if [[ -f "$NGINX_SITES_AVAILABLE/$1" ]]; then
+    echo "$NGINX_SITES_AVAILABLE/$1"
+  fi
+}
+
+get_log_path() {
+  local SITE="$1"
+  local LOGTYPE="$2"
+
+  if [[ -f "$NGINX_SITES_AVAILABLE/$SITE" ]]; then
+    if [[ "$LOGTYPE" == "error" ]]; then
+      echo "$(grep -oP '(?<=error_log ).*?(?= error;$)' "$NGINX_SITES_AVAILABLE/$SITE")"
+    elif [[ "$LOGTYPE" == "access" ]]; then
+      echo "$(grep -oP '(?<=access_log ).*?(?=;$)' "$NGINX_SITES_AVAILABLE/$SITE")"
+    fi
+  fi
+}
+
+generate_site_config() {
+  NAME="$1"
+  TEMPLATE="$2"
+  
+  local TEMPLATE_PATH="$NGINX_DIR/_templates"
+
+  if [[ ! -d "$TEMPLATE_PATH" ]]; then
+    sudo mkdir -p "$TEMPLATE_PATH"
+  fi
+
+  if [[ -z "$NAME" ]]; then
+    echo "No name provided"
+    exit 1
+  fi
+
+  if [[ -z "$TEMPLATE" ]]; then
+    echo "No template provided. Using base"
+    TEMPLATE="base"
+  fi
+
+  if [[ ! -f "$TEMPLATE_PATH/$TEMPLATE" ]]; then
+    local templateUrl="https://tools.ionnet.io/data/ngx/templates/$TEMPLATE"
+    echo "$TEMPLATE template not found. Checking online..."
+    if wget -q --method=HEAD "$templateUrl"; then
+      echo "Downloading $TEMPLATE template..."
+      sudo wget -q -O "$TEMPLATE_PATH/$TEMPLATE" "$templateUrl"
+      if [[ $? -ne 0 ]]; then
+        echo "$(printf_red "Failed to download $TEMPLATE template")"
+        exit 1
+      else
+        echo "$(printf_green "Downloaded $TEMPLATE template")"
+      fi
+    else
+      echo "$(printf_red "Template $TEMPLATE not found")"
+      echo "Please create the template manually or use an online template."
+      get_templates
+      exit 1
+    fi
+    sudo chmod 644 "$TEMPLATE_PATH/$TEMPLATE"
+  fi
+
+  local SITE_CONFIG="$NGINX_SITES_AVAILABLE/$NAME"
+
+  if [[ -f "$SITE_CONFIG" ]]; then
+    echo "Site $NAME already exists"
+    exit 1
+  fi
+
+  sudo cp "$TEMPLATE_PATH/$TEMPLATE" "$SITE_CONFIG"
+  sudo chmod 644 "$SITE_CONFIG"
+  
+  # replace the placeholder with the variables
+  # Check env variables for configs
+  sudo sed -i "s^{{server_name}}^$NAME^g" "$SITE_CONFIG"
+  sudo sed -i "s^{{vhosts_dir}}^$VHOSTS^g" "$SITE_CONFIG"
+  sudo sed -i "s^{{logs_dir}}^$LOGS^g" "$SITE_CONFIG"
+  sudo sed -i "s^{{nginx_dir}}^$NGINX_DIR^g" "$SITE_CONFIG"
+
+  # Ask if it should create folder in /var/www
+  local answer=
+  read -p "Create folder in $VHOSTS/$NAME? [y/N]: " answer
+  if [[ $answer == "y" ]]; then
+    sudo mkdir -p "$VHOSTS/$NAME"
+    sudo chmod 755 "$VHOSTS/$NAME"
+    sudo chown -R $USER:www-data "$VHOSTS/$NAME"
+    echo "<?php phpinfo();" > "$VHOSTS/$NAME/index.php"
+    sudo chmod 755 "$VHOSTS/$NAME"
+    sudo chown -R $USER:www-data "$VHOSTS/$NAME"
+  fi
+
+  # Create error logs
+  sudo mkdir -p "$LOGS/$NAME"
+  sudo touch "$LOGS/$NAME/error_log error"
+  sudo touch "$LOGS/$NAME/access_log"
+
+  read -p "Enable? [y/N]: " answer
+  if [[ $answer == "y" ]]; then
+    enable "$NAME"
+  fi
+}
+
+remove_site() {
+  NAME="$1"
+  if [[ -z "$NAME" ]]; then
+    echo "No name provided"
+    exit 1
+  fi
+  
+  if [[ ! -f "$NGINX_SITES_AVAILABLE/$NAME" ]]; then
+    echo "Site \"$NAME\" not found"
+    exit 1
+  fi
+
+  # Request confirmation
+  local answer="$2"
+  if [[ -z "$answer" ]]; then
+    read -p "This will delete the configuration and log files. Are you sure you want to remove $NAME? [y/N]: " answer
+  fi
+
+  if [[ $answer != "y" ]]; then
+    echo "Aborting"
+    exit 1
+  fi
+
+  # Remove the site config
+  if [[ -f "$NGINX_SITES_ENABLED/$NAME" ]]; then
+    sudo rm "$NGINX_SITES_ENABLED/$NAME"
+  fi
+  if [[ -f "$NGINX_SITES_AVAILABLE/$NAME" ]]; then
+    sudo rm "$NGINX_SITES_AVAILABLE/$NAME"
+  fi
+  # Remove the logs
+  sudo rm -rf "$LOGS/$NAME"
+
+  echo "Removed $NAME"
+}
+
+view_logs() {
+  NAME="$1"
+  if [[ -z "$NAME" ]]; then
+    echo "No name provided"
+    exit 1
+  fi
+
+  if [[ ! -f "$NGINX_SITES_AVAILABLE/$NAME" ]]; then
+    echo "Site \"$NAME\" not found"
+    exit 1
+  fi
+
+  # View from the bottom 
+  local LOGTYPE="$2"
+  if [[ -z "$LOGTYPE" ]]; then
+    LOGTYPE="access"
+  fi
+
+  if [[ "$LOGTYPE" == "access" ]]; then
+    local LOGFILE=`get_log_path "$NAME" "access"`
+    # sudo less +G "$LOGS/$NAME/access_log"
+    sudo less +G "$LOGFILE"
+  elif [[ "$LOGTYPE" == "error" ]]; then
+    local LOGFILE=`get_log_path "$NAME" "error"`
+    # sudo less +G "$LOGS/$NAME/error_log"
+    sudo less +G "$LOGFILE"
+  else
+    echo "Invalid log type"
+    exit 1
+  fi
+}
+
+cert() {
+  # Make sure certbot is installed
+  if [[ ! -f "/usr/bin/certbot" ]]; then
+    echo "Certbot not found"
+    echo "Please install certbot"
+    read -p "Install certbot? [y/N]: " answer
+
+    if [[ $answer -ne "y" && $answer -ne "Y" ]]; then
+      exit 1
+    fi
+    # make sure snapd is installed
+    if [[ ! -f "/usr/bin/snap" ]]; then
+      echo "Snap not found"
+      echo "Please install snap"
+      read -p "Install snap? [y/N]: " answer
+
+      if [[ $answer -ne "y" && $answer -ne "Y" ]]; then
+        exit 1
+      fi
+      sudo apt update
+      sudo apt install snapd -y
+    fi
+    
+    sudo snap install --classic certbot
+    # Create symlink to make it easier to use
+    sudo ln -s /snap/bin/certbot /usr/bin/certbot
+  fi
+  
+  NAME="$1"
+  sudo certbot --nginx -d $NAME
+}
+
+cloudflare_validate_token() {
+  # Get the Cloudflare API token
+  local CLOUDFLARE_API_TOKEN="$NGX_CLOUDFLARE_API_TOKEN"
+  if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then
+    echo "No Cloudflare API token provided"
+    echo "Please set the API token in the config: $NGX_CONFIG"
+    echo "NGX_CLOUDFLARE_API_TOKEN= # Set this to the Cloudflare API token"
+    return 1
+  fi
+
+  # Validate token
+  local CLOUDFLARE_TOKEN_RESPONSE="$(curl -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+     -H "Content-Type:application/json")"
+
+  # Check if the request was successful
+  local CLOUDFLARE_TOKEN_SUCCESS="$(echo "$CLOUDFLARE_TOKEN_RESPONSE" | grep -oP '(?<="success":).*?(?=,)')"
+  if [[ "$CLOUDFLARE_TOKEN_SUCCESS" != "true" ]]; then
+    echo "Failed to validate Cloudflare API token"
+    echo "$CLOUDFLARE_TOKEN_RESPONSE"
+    return 1
+  fi
+
+  return 0
+}
+
+cloudflare_get_zones() { # Unfinished
+  # Get the Cloudflare API token
+  local CLOUDFLARE_API_TOKEN="$NGX_CLOUDFLARE_API_TOKEN"
+
+  # Get the Cloudflare zones
+  local CLOUDFLARE_ZONES_RESPONSE="$(curl -X GET "https://api.cloudflare.com/client/v4/zones" \
+     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+     -H "Content-Type:application/json")"
+
+  # Check if the request was successful
+  local CLOUDFLARE_ZONES_SUCCESS="$(echo "$CLOUDFLARE_ZONES_RESPONSE" | grep -oP '(?<="success":).*?(?=,)')"
+  if [[ "$CLOUDFLARE_ZONES_SUCCESS" != "true" ]]; then
+    echo "Failed to get Cloudflare zones"
+    echo "$CLOUDFLARE_ZONES_RESPONSE"
+    return 1
+  fi
+
+  # Get the Cloudflare zones
+
+  # Remove "account" fieid info
+  CLOUDFLARE_ZONES_RESPONSE=$(sed 's/"account":.*?},//g' <<< "$CLOUDFLARE_ZONES_RESPONSE")
+  local CLOUDFLARE_ZONES="$(echo "$CLOUDFLARE_ZONES_RESPONSE" | grep -oP '(?<="name":")\S*?(?="(,|}))')"
+  local CLOUDFLARE_ZONE_IDS="$(echo "$CLOUDFLARE_ZONES_RESPONSE" | grep -oP '(?<="id":")\S*?(?="(,|}))')"
+  # echo $CLOUDFLARE_ZONES_RESPONSE;
+  # Mix the two together with a | in between
+  local CLOUDFLARE_ZONES="$(paste -d'|' <(echo "$CLOUDFLARE_ZONES") <(echo "$CLOUDFLARE_ZONE_IDS"))"
+  
+  echo "$CLOUDFLARE_ZONES"
+}
+
+# Create Cloudflare DNS record (Unfinished)
+cloudflare_update_dns() {
+  NAME="$1"
+  if [[ -z "$NAME" ]]; then
+    echo "No name provided"
+    exit 1
+  fi
+
+  if [[ ! -f "$NGINX_SITES_AVAILABLE/$NAME" ]]; then
+    echo "Site \"$NAME\" not found"
+    exit 1
+  fi
+
+  # Get the IP
+  local IP="$HOST_IP"
+  if [[ -z "$IP" ]]; then
+    IP="$(get_ip)"
+    if [[ -z "$IP" ]]; then
+      echo "Failed to get IP"
+      exit 1
+    fi
+  fi
+
+  echo "Using IP: $IP"
+  read -p "Is this correct? [y/N]: " answer
+  if [[ $answer != "y" ]]; then
+    echo "Aborting, please set the IP in the config: $NGX_CONFIG"
+    echo "HOST_IP=0.0.0.0 # Set this to the IP of the server"
+    exit 1
+  fi
+
+  # Validate the Cloudflare API token
+  cloudflare_validate_token
+  if [[ $? -ne 0 ]]; then
+    exit 1
+  fi
+  # Get the Cloudflare API token
+  local CLOUDFLARE_API_TOKEN="$NGX_CLOUDFLARE_API_TOKEN"
+
+  echo "Getting Cloudflare zones..."
+  # Get the Cloudflare zones
+  local CLOUDFLARE_ZONES="$(cloudflare_get_zones)"
+  if [[ $? -ne 0 ]]; then
+    exit 1
+  fi
+
+  # Ask which zone to use
+  local CLOUDFLARE_ZONE=
+  local CLOUDFLARE_ZONE_ID=
+  local CLOUDFLARE_RECORD_ID=
+  local answer=
+
+  echo "Cloudflare zones:"
+  # In numbers
+  local i=1
+  for zone in $CLOUDFLARE_ZONES; do
+    echo "$i: $zone"
+    i=$((i+1))
+  done
+  read -p "Which zone do you want to use? " answer
+  if [[ -z "$answer" ]]; then
+    echo "Aborting"
+    exit 1
+  fi
+
+  # Get the zone
+  i=1
+  for zone in $CLOUDFLARE_ZONES; do
+    if [[ "$i" == "$answer" ]]; then
+      CLOUDFLARE_ZONE="$zone"
+      break
+    fi
+    i=$((i+1))
+  done
+
+  if [[ -z "$CLOUDFLARE_ZONE" ]]; then
+    echo "Invalid zone"
+    exit 1
+  fi
+
+  echo "Using zone: $CLOUDFLARE_ZONE"
+
+  # Get the Cloudflare record ID
+  local CLOUDFLARE_RECORD_ID="$NGX_CLOUDFLARE_RECORD_ID"
+  if [[ -z "$CLOUDFLARE_RECORD_ID" ]]; then
+    echo "No Cloudflare record ID provided"
+    exit 1
+  fi
+
+  # Update the DNS record
+  local CLOUDFLARE_RESPONSE="$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records/$CLOUDFLARE_RECORD_ID" \
+    -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data "{\"type\":\"A\",\"name\":\"$NAME\",\"content\":\"$IP\",\"ttl\":1,\"proxied\":false}")"
+
+  # Check if the request was successful
+  local CLOUDFLARE_SUCCESS="$(echo "$CLOUDFLARE_RESPONSE" | grep -oP '(?<="success":).*?(?=,)')"
+  if [[ "$CLOUDFLARE_SUCCESS" != "true" ]]; then
+    echo "Failed to update DNS record"
+    echo "$CLOUDFLARE_RESPONSE"
+    exit 1
+  fi
+
+  echo "Updated DNS record"
+}
+
+update_self() {
+  echo "Updating ngx..."
+  wget -q -O - https://tools.ionnet.io/ngx_install.sh | sudo bash &> /dev/null
+
+  if [[ $? -ne 0 ]]; then
+    echo $(printf_red "Failed to update ngx")
+    exit 1
+  fi
+  
+  echo $(printf_green "Done.")
+}
+
+show_help() {
+  echo "Usage of ngx:"
+  echo "  list                            - Shows a list of all websites and their enabled/disabled status"
+  echo "  enable <SITE>                   - Enables the given website"
+  echo "  disable <SITE>                  - Disables the given website"
+  echo "  status <SITE>                   - Shows the enabled/disabled status of a single website"
+  echo "  edit <SITE>                     - Begin the editing of a website config and requests a reload when finished if any changes are made"
+  echo "  where <SITE>                    - Displays the full path to a website config"
+  echo "  root <SITE>                     - Displays the root path of a website"
+  echo "  log <SITE> [error|access]       - Displays the log of a website"
+  echo "  logpath <SITE> [error|access]   - Displays the path to the log of a website"
+  echo "  templates                       - Lists all available templates"
+  echo "  remove <SITE>                   - Removes a website config"
+  echo "  new <SITE> [template]           - Generates a new website config. If no template is provided, the base template. See \"ngx templates\" for a list of available templates"
+  echo "  generate <SITE> [template]      - Alias of \"new\""
+  echo "  cert <SITE>                     - Request a certificate with LetsEncrypt on the given website"
+  echo "  new+cert <SITE>                 - Alias of \"new\" followed by a \"cert\""
+  echo "  start                           - Starts nginx"
+  echo "  restart                         - Restarts nginx"
+  echo "  reload                          - Reloads nginx"
+  echo "  stop                            - Stops nginx"
+  echo "  ip                              - Alias for 'hostname -I' and getting the first IP"
+  echo "  update-self                     - Updates this tool using wget"
+  echo "  help                            - Shows this help"
+  echo "  completions                     - Generates completions for ngx"
+}
+
+# If no arguments are given, list all sites
+# of if the first argument is "list", list all sites
+if [[ $# -eq 0 ]] || [[ "$1" == "list" ]]; then
+  list_sites
+  exit 0
+fi
+
+if [[ "$1" == "list-raw" ]]; then
+  list_sites_raw
+  exit 0
+fi
+
+# If the first argument is "enable", enable the site
+if [[ "$1" == "enable" ]]; then
+  enable $2
+  exit 0
+fi
+
+# If the first argument is "disable", disable the site
+if [[ "$1" == "disable" ]]; then
+  disable $2
+  exit 0
+fi
+
+# If the first argument is "status", print whether the site is enabled or not
+if [[ "$1" == "status" ]]; then
+  if is_enabled $2; then
+    echo "Enabled"
+  else
+    echo "Disabled"
+  fi
+  exit 0
+fi
+
+if [[ "$1" == "root" ]]; then
+  root $2
+  exit 0
+fi
+
+if [[ "$1" == "edit" ]]; then
+  fullPath="$NGINX_SITES_AVAILABLE/$2"
+  _edit_content="$(cat $fullPath)"
+  edit $2
+  # Check if the file has changed
+  if [[ "$_edit_content" != "$(cat $fullPath)" ]]; then
+    echo "Changes detected"
+    prompt_reload
+  else 
+    echo "No changes made"
+  fi
+  exit 0
+fi
+
+if [[ "$1" == "where" ]]; then
+  where_site $2
+  exit 0
+fi
+
+if [[ "$1" == "templates" ]]; then
+  get_templates
+  exit 0
+fi
+
+if [[ "$1" == "generate" || "$1" == "new" ]]; then
+  generate_site_config $2 $3
+  exit 0
+fi
+
+if [[ "$1" == "remove" ]]; then
+  remove_site $2 $3
+  exit 0
+fi
+
+if [[ "$1" == "log" ]]; then
+  view_logs $2 $3
+  exit 0
+fi
+
+if [[ "$1" == "logpath" ]]; then
+  get_log_path $2 $3
+  exit 0
+fi
+
+if [[ "$1" == "cert" ]]; then
+  cert $2
+  exit 0
+fi
+
+if [[ "$1" == "new+cert" ]]; then
+  generate_site_config $2 $3
+  cert $2
+  exit 0
+fi
+
+if [[ "$1" == "start" ]]; then
+  start_nginx
+  exit 0
+fi
+
+if [[ "$1" == "restart" ]]; then
+  restart_nginx
+  exit 0
+fi
+
+if [[ "$1" == "reload" ]]; then
+  reload_nginx
+  exit 0
+fi
+
+if [[ "$1" == "stop" ]]; then
+  stop_nginx
+  exit 0
+fi
+
+if [[ "$1" == "ip" ]]; then
+  get_ip
+  exit 0
+fi
+
+if [[ "$1" == "cloudflare-update-dns" ]]; then
+  cloudflare_update_dns $2
+  exit 0
+fi
+
+if [[ "$1" == "update-self" ]]; then
+  update_self
+  exit 0
+fi
+
+if [[ "$1" == "help" ]]; then
+  show_help
+  exit 0
+fi
+
+if [[ "$1" == "completions" ]]; then
+  echo "Generating completions..."
+  completionPath="/etc/bash_completion.d/ngx-completion"
+  sudo touch "$completionPath"
+  echo "# Completion function
+  _ngx_completions() {
+    if [ \${#COMP_WORDS[@]} -eq 2 ]; then
+      WORDS=\"list enable disable status edit where root log logpath templates remove new generate cert new start restart reload stop ip update-self help completions\"
+      COMPREPLY=(\$(compgen -W \"\$WORDS\" -- \"\${COMP_WORDS[1]}\"))  
+    elif [ \${#COMP_WORDS[@]} -eq 3 ]; then
+      COMPREPLY=(\$(compgen -W \"\$(ls \${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available})\" -- \"\${COMP_WORDS[2]}\"))  
+    fi
+  }
+  complete -F _ngx_completions ngx
+  " | sudo tee "$completionPath" &> /dev/null
+  sudo chmod +x "$completionPath"
+  echo "Updated completions at $completionPath"
+  exit 0
+fi
+
+# No command
+echo "Command not found: $1"
