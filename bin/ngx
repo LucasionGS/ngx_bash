@@ -752,7 +752,7 @@ if [[ "$1" == "completions" ]]; then
   echo "# Completion function
   _ngx_completions() {
     if [ \${#COMP_WORDS[@]} -eq 2 ]; then
-      WORDS=\"list enable disable status edit where root log logpath templates remove new generate cert new start restart reload stop ip update-self help completions\"
+      WORDS=\"list enable disable status edit where root log logpath templates remove new generate cert new start restart reload stop ip update-self help completions version config\"
       COMPREPLY=(\$(compgen -W \"\$WORDS\" -- \"\${COMP_WORDS[1]}\"))  
     elif [ \${#COMP_WORDS[@]} -eq 3 ]; then
       COMPREPLY=(\$(compgen -W \"\$(ls \${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available})\" -- \"\${COMP_WORDS[2]}\"))  
