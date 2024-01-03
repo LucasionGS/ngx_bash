@@ -156,7 +156,7 @@ root() {
   exit 1
 }
 
-edit() {
+get_editor() {
   editor="$NGX_EDITOR"
   if [[ -z "$editor" ]]; then
     editor="$(which vim)"
@@ -167,6 +167,12 @@ edit() {
   if [[ -z "$editor" ]]; then
     editor="$(which vi)"
   fi
+
+  echo $editor
+}
+
+edit() {
+  editor="$(get_editor)"
   if [[ -z "$editor" ]]; then
     echo "No editor found"
     echo "Please edit the site configuration manually"
@@ -584,7 +590,8 @@ show_help() {
   echo "  update-self                     - Updates this tool using wget"
   echo "  help                            - Shows this help"
   echo "  completions                     - Generates completions for ngx"
-  echo "  version                         - Displays the current version of NGX" 
+  echo "  version                         - Displays the current version of NGX"
+  echo "  config                          - Starts the editor in the NGX config at $NGX_CONFIG"
 }
 
 # If no arguments are given, list all sites
@@ -637,6 +644,18 @@ if [[ "$1" == "edit" ]]; then
   else 
     echo "No changes made"
   fi
+  exit 0
+fi
+
+if [[ "$1" == "config" ]]; then
+  editor="$(get_editor)"
+
+  if [[ -z "$editor" ]]; then
+    echo "Couldn't find an editor to use for editing the config. Do it manually at $NGX_CONFIG"
+    exit 1
+  fi
+
+  "$editor" "$NGX_CONFIG"
   exit 0
 fi
 
