@@ -186,7 +186,7 @@ edit() {
       "$editor" "+set ft=nginx" "$NGINX_SITES_AVAILABLE/$1"
     else
       "$editor" "$NGINX_SITES_AVAILABLE/$1"
-    end
+    fi
   else
     echo "Site \"$1\" not found"
   fi

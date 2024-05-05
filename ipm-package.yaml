@@ -1,7 +1,7 @@
 # Name of this package. Must match ^[a-z0-9\-]+$
 name: "ngx"
 # Version of this package. Must match ^[0-9]+\.[0-9]+\.[0-9]+$
-version: "1.1.0"
+version: "1.1.2"
 # Description of this package.
 description: "CLI tool for interacting with NGINX easier"
 # Author of this package.
@@ -13,4 +13,4 @@ dist:
 # Binary files that should be executable after installation. Relative to the dist directory.
 # Can be a list of strings (for any), or a map of platform to a list of strings. Platform can be "linux", "windows", or "any".
 bin:
-  linux: ["bin/ngx"]
+  linux: ["ngx"]
