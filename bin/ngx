@@ -9,6 +9,7 @@ NGINX_SITES_AVAILABLE="$NGINX_DIR/sites-available"
 NGINX_SITES_ENABLED="$NGINX_DIR/sites-enabled"
 VHOSTS="/var/www/vhosts"
 LOGS="/var/www/log"
+TEMPLATE_PATH="$NGINX_DIR/_templates"
 
 # If the config file exists, load it
 if [[ -f "$NGX_CONFIG" ]]; then
@@ -18,7 +19,7 @@ else
   touch "$NGX_CONFIG"
 fi
 
-NGX_VERSION=1.0.0
+NGX_VERSION=1.2.0
 
 printf_green() {
   echo -e "\033[0;32m$1\033[0m"
@@ -30,13 +31,12 @@ printf_red() {
 
 # Get a list of all the templates
 get_templates() {
-  local TEMPLATE_PATH="$NGINX_DIR/_templates"
   if [[ ! -d "$TEMPLATE_PATH" ]]; then
     sudo mkdir -p "$TEMPLATE_PATH"
   fi
   echo $(printf_green "Local templates:")
   for template in $(ls $TEMPLATE_PATH); do
-    echo "\t$template"
+    echo "    $template"
   done
   echo $(printf_green "Online templates:")
   local templateList="$(wget -q -O - https://tools.ionnet.io/data/ngx/templates.php)"
@@ -215,7 +215,6 @@ generate_site_config() {
   NAME="$1"
   TEMPLATE="$2"
   
-  local TEMPLATE_PATH="$NGINX_DIR/_templates"
 
   if [[ ! -d "$TEMPLATE_PATH" ]]; then
     sudo mkdir -p "$TEMPLATE_PATH"
@@ -231,8 +230,11 @@ generate_site_config() {
     TEMPLATE="base"
   fi
 
+  local TEMPLATE_SCRIPT="$TEMPLATE_PATH/$TEMPLATE.setup.sh"
+
   if [[ ! -f "$TEMPLATE_PATH/$TEMPLATE" ]]; then
     local templateUrl="https://tools.ionnet.io/data/ngx/templates/$TEMPLATE"
+    local templateSetupUrl="https://tools.ionnet.io/data/ngx/templates/$TEMPLATE.setup.sh"
     echo "$TEMPLATE template not found. Checking online..."
     if wget -q --method=HEAD "$templateUrl"; then
       echo "Downloading $TEMPLATE template..."
@@ -242,6 +244,20 @@ generate_site_config() {
         exit 1
       else
         echo "$(printf_green "Downloaded $TEMPLATE template")"
+        sudo chmod 644 "$TEMPLATE_PATH/$TEMPLATE"
+
+        if wget -q --method=HEAD "$templateSetupUrl"; then
+          echo "Downloading $TEMPLATE setup script..."
+          sudo wget -q -O "$TEMPLATE_SCRIPT" "$templateSetupUrl"
+          if [[ $? -ne 0 ]]; then
+            echo "$(printf_red "Failed to download setup script")"
+            exit 1
+          else
+            echo "$(printf_green "Downloaded setup script")"
+            sudo chmod 755 "$TEMPLATE_SCRIPT"
+          fi
+        fi
+
       fi
     else
       echo "$(printf_red "Template $TEMPLATE not found")"
@@ -249,7 +265,6 @@ generate_site_config() {
       get_templates
       exit 1
     fi
-    sudo chmod 644 "$TEMPLATE_PATH/$TEMPLATE"
   fi
 
   local SITE_CONFIG="$NGINX_SITES_AVAILABLE/$NAME"
@@ -269,6 +284,11 @@ generate_site_config() {
   sudo sed -i "s^{{logs_dir}}^$LOGS^g" "$SITE_CONFIG"
   sudo sed -i "s^{{nginx_dir}}^$NGINX_DIR^g" "$SITE_CONFIG"
 
+  # Create error logs
+  sudo mkdir -p "$LOGS/$NAME"
+  sudo touch "$LOGS/$NAME/error_log"
+  sudo touch "$LOGS/$NAME/access_log"
+
   # Ask if it should create folder in /var/www
   local answer=
   read -p "Create folder in $VHOSTS/$NAME? [y/N]: " answer
@@ -276,15 +296,18 @@ generate_site_config() {
     sudo mkdir -p "$VHOSTS/$NAME"
     sudo chmod 755 "$VHOSTS/$NAME"
     sudo chown -R $USER:www-data "$VHOSTS/$NAME"
-    echo "<?php phpinfo();" > "$VHOSTS/$NAME/index.php"
-    sudo chmod 755 "$VHOSTS/$NAME"
+
+    # Check locally or online for $TEMPLATE/setup.sh
+    if [[ -f "$TEMPLATE_SCRIPT" ]]; then
+      echo "Running setup script..."
+      "$TEMPLATE_SCRIPT" "$VHOSTS/$NAME"
+      echo "Setup script done"
+    else
+      echo "<?php phpinfo();" > "$VHOSTS/$NAME/index.php"
+      sudo chmod 755 "$VHOSTS/$NAME"
+    fi
     sudo chown -R $USER:www-data "$VHOSTS/$NAME"
   fi
-
-  # Create error logs
-  sudo mkdir -p "$LOGS/$NAME"
-  sudo touch "$LOGS/$NAME/error_log error"
-  sudo touch "$LOGS/$NAME/access_log"
 
   read -p "Enable? [y/N]: " answer
   if [[ $answer == "y" ]]; then
