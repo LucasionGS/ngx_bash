@@ -19,7 +19,7 @@ else
   touch "$NGX_CONFIG"
 fi
 
-NGX_VERSION=1.2.0
+NGX_VERSION=1.2.1
 
 printf_green() {
   echo -e "\033[0;32m$1\033[0m"
@@ -214,6 +214,7 @@ get_log_path() {
 generate_site_config() {
   NAME="$1"
   TEMPLATE="$2"
+  USE_ONLINE_PARAM="$3"
   
 
   if [[ ! -d "$TEMPLATE_PATH" ]]; then
@@ -232,10 +233,14 @@ generate_site_config() {
 
   local TEMPLATE_SCRIPT="$TEMPLATE_PATH/$TEMPLATE.setup.sh"
 
-  if [[ ! -f "$TEMPLATE_PATH/$TEMPLATE" ]]; then
+  if [[ ! -f "$TEMPLATE_PATH/$TEMPLATE" || "$USE_ONLINE_PARAM" == "--online" ]]; then
     local templateUrl="https://tools.ionnet.io/data/ngx/templates/$TEMPLATE"
     local templateSetupUrl="https://tools.ionnet.io/data/ngx/templates/$TEMPLATE.setup.sh"
-    echo "$TEMPLATE template not found. Checking online..."
+    if [[ "$USE_ONLINE_PARAM" == "--online" ]]; then
+      echo "Using online template"
+    else 
+      echo "$TEMPLATE template not found. Checking online..."
+    fi
     if wget -q --method=HEAD "$templateUrl"; then
       echo "Downloading $TEMPLATE template..."
       sudo wget -q -O "$TEMPLATE_PATH/$TEMPLATE" "$templateUrl"
@@ -578,6 +583,18 @@ cloudflare_update_dns() {
 }
 
 update_self() {
+  # Check if ngx is installed via IPM
+  if [[ -f "/usr/local/bin/ipm" ]]; then
+    echo "Updating ngx using IPM..."
+    sudo ipm install -gu ngx
+    if [[ $? -ne 0 ]]; then
+      echo $(printf_red "Failed to update ngx")
+      exit 1
+    fi
+    echo $(printf_green "Done.")
+    exit 0
+  fi
+  
   echo "Updating ngx..."
   wget -q -O - https://tools.ionnet.io/ngx_install.sh | sudo bash &> /dev/null
 
@@ -585,7 +602,7 @@ update_self() {
     echo $(printf_red "Failed to update ngx")
     exit 1
   fi
-  
+    
   echo $(printf_green "Done.")
 }
 
@@ -595,31 +612,31 @@ version() {
 
 show_help() {
   echo "Usage of ngx:"
-  echo "  list                            - Shows a list of all websites and their enabled/disabled status"
-  echo "  enable <SITE>                   - Enables the given website"
-  echo "  disable <SITE>                  - Disables the given website"
-  echo "  status <SITE>                   - Shows the enabled/disabled status of a single website"
-  echo "  edit <SITE>                     - Begin the editing of a website config and requests a reload when finished if any changes are made"
-  echo "  where <SITE>                    - Displays the full path to a website config"
-  echo "  root <SITE>                     - Displays the root path of a website"
-  echo "  log <SITE> [error|access]       - Displays the log of a website"
-  echo "  logpath <SITE> [error|access]   - Displays the path to the log of a website"
-  echo "  templates                       - Lists all available templates"
-  echo "  remove <SITE>                   - Removes a website config"
-  echo "  new <SITE> [template]           - Generates a new website config. If no template is provided, the base template. See \"ngx templates\" for a list of available templates"
-  echo "  generate <SITE> [template]      - Alias of \"new\""
-  echo "  cert <SITE>                     - Request a certificate with LetsEncrypt on the given website"
-  echo "  new+cert <SITE>                 - Alias of \"new\" followed by a \"cert\""
-  echo "  start                           - Starts nginx"
-  echo "  restart                         - Restarts nginx"
-  echo "  reload                          - Reloads nginx"
-  echo "  stop                            - Stops nginx"
-  echo "  ip                              - Alias for 'hostname -I' and getting the first IP"
-  echo "  update-self                     - Updates this tool using wget"
-  echo "  help                            - Shows this help"
-  echo "  completions                     - Generates completions for ngx"
-  echo "  version                         - Displays the current version of NGX"
-  echo "  config                          - Starts the editor in the NGX config at $NGX_CONFIG"
+  echo "  list                                  - Shows a list of all websites and their enabled/disabled status"
+  echo "  enable <SITE>                         - Enables the given website"
+  echo "  disable <SITE>                        - Disables the given website"
+  echo "  status <SITE>                         - Shows the enabled/disabled status of a single website"
+  echo "  edit <SITE>                           - Begin the editing of a website config and requests a reload when finished if any changes are made"
+  echo "  where <SITE>                          - Displays the full path to a website config"
+  echo "  root <SITE>                           - Displays the root path of a website"
+  echo "  log <SITE> [error|access]             - Displays the log of a website"
+  echo "  logpath <SITE> [error|access]         - Displays the path to the log of a website"
+  echo "  templates                             - Lists all available templates"
+  echo "  remove <SITE>                         - Removes a website config"
+  echo "  new <SITE> [template]                 - Generates a new website config. If no template is provided, the base template. See \"ngx templates\" for a list of available templates"
+  echo "  generate <SITE> [template] [--online] - Alias of \"new\""
+  echo "  cert <SITE>                           - Request a certificate with LetsEncrypt on the given website"
+  echo "  new+cert <SITE>                       - Alias of \"new\" followed by a \"cert\""
+  echo "  start                                 - Starts nginx"
+  echo "  restart                               - Restarts nginx"
+  echo "  reload                                - Reloads nginx"
+  echo "  stop                                  - Stops nginx"
+  echo "  ip                                    - Alias for 'hostname -I' and getting the first IP"
+  echo "  update-self                           - Updates this tool using wget"
+  echo "  help                                  - Shows this help"
+  echo "  completions                           - Generates completions for ngx"
+  echo "  version                               - Displays the current version of NGX"
+  echo "  config                                - Starts the editor in the NGX config at $NGX_CONFIG"
 }
 
 # If no arguments are given, list all sites
@@ -783,7 +800,15 @@ if [[ "$1" == "completions" ]]; then
       WORDS=\"list enable disable status edit where root log logpath templates remove new generate cert new start restart reload stop ip update-self help completions version config\"
       COMPREPLY=(\$(compgen -W \"\$WORDS\" -- \"\${COMP_WORDS[1]}\"))  
     elif [ \${#COMP_WORDS[@]} -eq 3 ]; then
-      COMPREPLY=(\$(compgen -W \"\$(ls \${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available})\" -- \"\${COMP_WORDS[2]}\"))  
+      COMPREPLY=(\$(compgen -W \"\$(ls \${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available})\" -- \"\${COMP_WORDS[2]}\"))
+    elif [ \${#COMP_WORDS[@]} -eq 4 ]; then
+      if [ \"\${COMP_WORDS[1]}\" == \"log\" ]; then
+        COMPREPLY=(\$(compgen -W \"error access\" -- \"\${COMP_WORDS[3]}\"))  
+      elif [ \"\${COMP_WORDS[1]}\" == \"logpath\" ]; then
+        COMPREPLY=(\$(compgen -W \"error access\" -- \"\${COMP_WORDS[3]}\"))  
+      elif [ \"\${COMP_WORDS[1]}\" == \"generate\" ]; then
+        COMPREPLY=(\$(compgen -W \"\$(ls \${TEMPLATE_PATH})\" -- \"\${COMP_WORDS[3]}\"))  
+      fi
     fi
   }
   complete -F _ngx_completions ngx
