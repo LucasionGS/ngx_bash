@@ -19,7 +19,7 @@ else
   touch "$NGX_CONFIG"
 fi
 
-NGX_VERSION=1.2.1
+NGX_VERSION=1.2.2
 
 printf_green() {
   echo -e "\033[0;32m$1\033[0m"
@@ -388,6 +388,36 @@ view_logs() {
   fi
 }
 
+live_logs() {
+  NAME="$1"
+  if [[ -z "$NAME" ]]; then
+    echo "No name provided"
+    exit 1
+  fi
+
+  if [[ ! -f "$NGINX_SITES_AVAILABLE/$NAME" ]]; then
+    echo "Site \"$NAME\" not found"
+    exit 1
+  fi
+
+  # View from the bottom 
+  local LOGTYPE="$2"
+  if [[ -z "$LOGTYPE" ]]; then
+    LOGTYPE="access"
+  fi
+
+  if [[ "$LOGTYPE" == "access" ]]; then
+    local LOGFILE=`get_log_path "$NAME" "access"`
+    sudo tail -f "$LOGFILE"
+  elif [[ "$LOGTYPE" == "error" ]]; then
+    local LOGFILE=`get_log_path "$NAME" "error"`
+    sudo tail -f "$LOGFILE"
+  else
+    echo "Invalid log type"
+    exit 1
+  fi
+}
+
 cert() {
   # Make sure certbot is installed
   if [[ ! -f "/usr/bin/certbot" ]]; then
@@ -616,14 +646,18 @@ show_help() {
   echo "  enable <SITE>                         - Enables the given website"
   echo "  disable <SITE>                        - Disables the given website"
   echo "  status <SITE>                         - Shows the enabled/disabled status of a single website"
-  echo "  edit <SITE>                           - Begin the editing of a website config and requests a reload when finished if any changes are made"
+  echo "  edit <SITE>                           - Begin the editing of a website config and"
+  echo "                                          prompt for a reload if changes are made"
   echo "  where <SITE>                          - Displays the full path to a website config"
   echo "  root <SITE>                           - Displays the root path of a website"
   echo "  log <SITE> [error|access]             - Displays the log of a website"
+  echo "  livelog <SITE> [error|access]         - Displays the latest 10 lines of the log of a website"
+  echo "                                          and live updates when new lines are added"
   echo "  logpath <SITE> [error|access]         - Displays the path to the log of a website"
   echo "  templates                             - Lists all available templates"
   echo "  remove <SITE>                         - Removes a website config"
-  echo "  new <SITE> [template]                 - Generates a new website config. If no template is provided, the base template. See \"ngx templates\" for a list of available templates"
+  echo "  new <SITE> [template] [--online]      - Generates a new website config. If no template is provided, the base template."
+  echo "                                          See \"ngx templates\" for a list of available templates"
   echo "  generate <SITE> [template] [--online] - Alias of \"new\""
   echo "  cert <SITE>                           - Request a certificate with LetsEncrypt on the given website"
   echo "  new+cert <SITE>                       - Alias of \"new\" followed by a \"cert\""
@@ -729,6 +763,11 @@ if [[ "$1" == "log" ]]; then
   exit 0
 fi
 
+if [[ "$1" == "livelog" ]]; then
+  live_logs $2 $3
+  exit 0
+fi
+
 if [[ "$1" == "logpath" ]]; then
   get_log_path $2 $3
   exit 0
@@ -797,7 +836,7 @@ if [[ "$1" == "completions" ]]; then
   echo "# Completion function
   _ngx_completions() {
     if [ \${#COMP_WORDS[@]} -eq 2 ]; then
-      WORDS=\"list enable disable status edit where root log logpath templates remove new generate cert new start restart reload stop ip update-self help completions version config\"
+      WORDS=\"list enable disable status edit where root log livelog logpath templates remove new generate cert new start restart reload stop ip update-self help completions version config\"
       COMPREPLY=(\$(compgen -W \"\$WORDS\" -- \"\${COMP_WORDS[1]}\"))  
     elif [ \${#COMP_WORDS[@]} -eq 3 ]; then
       COMPREPLY=(\$(compgen -W \"\$(ls \${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available})\" -- \"\${COMP_WORDS[2]}\"))
@@ -806,6 +845,8 @@ if [[ "$1" == "completions" ]]; then
         COMPREPLY=(\$(compgen -W \"error access\" -- \"\${COMP_WORDS[3]}\"))  
       elif [ \"\${COMP_WORDS[1]}\" == \"logpath\" ]; then
         COMPREPLY=(\$(compgen -W \"error access\" -- \"\${COMP_WORDS[3]}\"))  
+      elif [ \"\${COMP_WORDS[1]}\" == \"livelog\" ]; then
+        COMPREPLY=(\$(compgen -W \"error access\" -- \"\${COMP_WORDS[3]}\"))
       elif [ \"\${COMP_WORDS[1]}\" == \"generate\" ]; then
         COMPREPLY=(\$(compgen -W \"\$(ls \${TEMPLATE_PATH})\" -- \"\${COMP_WORDS[3]}\"))  
       fi
