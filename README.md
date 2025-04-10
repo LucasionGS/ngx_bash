@@ -9,7 +9,7 @@ The NGX tool is a bash script to manage Nginx configurations, sites, and logs. I
 The NGX tool supports the following commands:
 
 ### List Sites
-- **Command:** `ngx list`
+- **Command:** `ngx list [--certs]`
 - **Description:** Lists all sites in the `sites-available` directory and their enabled/disabled status.
 
 ### Enable Site

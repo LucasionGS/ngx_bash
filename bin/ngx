@@ -19,7 +19,7 @@ else
   touch "$NGX_CONFIG"
 fi
 
-NGX_VERSION=1.2.2
+NGX_VERSION=1.3.0
 
 printf_green() {
   echo -e "\033[0;32m$1\033[0m"
