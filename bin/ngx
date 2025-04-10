@@ -52,19 +52,84 @@ is_enabled() {
   fi
 }
 
+check_site_certificate() {
+  local SITE="$1"
+  # Find the in-use certificate "ssl_certificate"
+  # Check if the certificate is valid
+  local CERT="$(grep -oP '(?<=ssl_certificate ).*?(?=;)' "$NGINX_SITES_AVAILABLE/$SITE")"
+  if [[ -z "$CERT" ]]; then
+    # echo "No certificate found"
+    echo "N/A"
+    return 1
+  fi
+  # Check if the certificate is valid
+  local RES="$(sudo openssl x509 -in "$CERT" -noout -text 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    echo "Invalid"
+    return 1
+  fi
+  # Check if the certificate is expired
+  local EXP="$(echo "$RES" | grep -oP '(?<=Not After : ).*?(?= \()')"
+  local EXP_DATE="$(date -d "$EXP" +%s)"
+  local NOW="$(date +%s)"
+  if [[ "$NOW" -lt "$EXP_DATE" ]]; then
+    echo "Expired"
+    return 1
+  fi
+  # Check if the certificate is valid
+  # local VALID="$(echo "$RES" | grep -oP '(?<=Verify return code: ).*?(?= \()')"
+  # if [[ "$VALID" != "0 (ok)" ]]; then
+  #   echo "Certificate is not valid"
+  #   return 1
+  # fi
+
+  echo "Valid"
+  return 0
+}
+
 # List all the sites in the sites-available directory, and whether they are enabled
 list_sites() {
+  local showcert=""
+  for param in "$@"; do
+    if [[ "$param" == "--certs" ]]; then
+      showcert="true"
+      break
+    fi
+  done
+
+  # Headers
+  if [[ "$showcert" == "true" ]]; then
+    echo -e "  Cert\t |  Status  | Config"
+    echo -e "-------------------------------"
+  else
+    # Standard
+    echo -e " Status  | Config"
+    echo -e "-------------------------------"
+  fi
+  
   for site in $(ls $NGINX_SITES_AVAILABLE); do
     # print the site name and whether it is enabled
     # enabled sites are printed in green
     # disabled sites are printed in red
+    local final=""
     if [[ -f "$NGINX_SITES_ENABLED/$site" ]]; then
       # echo -e "\033[0;32mEnabled \033[0m | $site"
-      echo -e "$(printf_green Enabled)  | $site"
+      final="$(printf_green Enabled)  | $site"
     else
       # echo -e "\033[0;31mDisabled\033[0m | $site"
-      echo -e "$(printf_red Disabled) | $site"
+      final="$(printf_red Disabled) | $site"
     fi
+
+    if [[ "$showcert" == "true" ]]; then
+      local res="$(check_site_certificate "$site")"
+      # check_site_certificate "$site"
+      if [[ $res == "Valid" ]]; then
+        final="$(printf_green "$res")\t | $final"
+      else
+        final="$(printf_red "$res")\t | $final"
+      fi
+    fi
+    echo -e "$final"
   done
 }
 
@@ -675,8 +740,8 @@ show_help() {
 
 # If no arguments are given, list all sites
 # of if the first argument is "list", list all sites
-if [[ $# -eq 0 ]] || [[ "$1" == "list" ]]; then
-  list_sites
+if [[ $# -eq 0 ]] || [[ "$1" == "list" ]] || [[ "$1" == "ls" ]]; then
+  list_sites $2
   exit 0
 fi
 
