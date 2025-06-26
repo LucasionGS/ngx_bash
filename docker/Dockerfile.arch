@@ -1,0 +1,27 @@
+FROM archlinux:latest
+
+# Update package database and install dependencies
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm \
+    nginx \
+    sudo \
+    wget \
+    curl \
+    openssl \
+    vim \
+    nano \
+    procps-ng \
+    && pacman -Scc --noconfirm
+
+# Create a test user with sudo privileges
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    groupadd -f http && \
+    usermod -a -G http testuser
+
+# Switch to test user
+USER testuser
+WORKDIR /home/testuser
+
+# Create test script
+CMD ["./test-ngx.sh"]

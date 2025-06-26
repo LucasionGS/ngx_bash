@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  ngx-debian:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.debian
+    container_name: ngx-test-debian
+    volumes:
+      - ../bin:/test/bin:ro
+      - ../bin/ngx:/usr/local/bin/ngx:ro
+      - ./test-ngx.sh:/home/testuser/test-ngx.sh:ro
+    networks:
+      - ngx-test
+    environment:
+      - NGX_EDITOR=nano
+    command: ["bash", "/home/testuser/test-ngx.sh"]
+    privileged: true
+
+  ngx-arch:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.arch
+    container_name: ngx-test-arch
+    volumes:
+      - ../bin:/test/bin:ro
+      - ../bin/ngx:/usr/local/bin/ngx:ro
+      - ./test-ngx.sh:/home/testuser/test-ngx.sh:ro
+    networks:
+      - ngx-test
+    environment:
+      - NGX_EDITOR=nano
+    command: ["bash", "/home/testuser/test-ngx.sh"]
+    privileged: true
+
+  ngx-interactive-debian:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.debian
+    container_name: ngx-interactive-debian
+    volumes:
+      - ../bin:/test/bin:ro
+      - ../bin/ngx:/usr/local/bin/ngx:ro
+      - ./test-ngx.sh:/home/testuser/test-ngx.sh:ro
+    networks:
+      - ngx-test
+    stdin_open: true
+    tty: true
+    environment:
+      - NGX_EDITOR=nano
+    command: /bin/bash
+    profiles:
+      - interactive
+    privileged: true
+
+  ngx-interactive-arch:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.arch
+    container_name: ngx-interactive-arch
+    volumes:
+      - ../bin:/test/bin:ro
+      - ../bin/ngx:/usr/local/bin/ngx:ro
+      - ./test-ngx.sh:/home/testuser/test-ngx.sh:ro
+    networks:
+      - ngx-test
+    stdin_open: true
+    tty: true
+    environment:
+      - NGX_EDITOR=nano
+    command: /bin/bash
+    profiles:
+      - interactive
+    privileged: true
+
+networks:
+  ngx-test:
+    driver: bridge

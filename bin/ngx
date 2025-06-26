@@ -3,21 +3,99 @@
 ##################################
 # NGX tool developed by Lucasion #
 ##################################
-NGX_CONFIG="$HOME/.ngx.conf"
-NGINX_DIR="/etc/nginx"
-NGINX_SITES_AVAILABLE="$NGINX_DIR/sites-available"
-NGINX_SITES_ENABLED="$NGINX_DIR/sites-enabled"
-VHOSTS="/var/www/vhosts"
-LOGS="/var/www/log"
-TEMPLATE_PATH="$NGINX_DIR/_templates"
 
-# If the config file exists, load it
-if [[ -f "$NGX_CONFIG" ]]; then
-  source "$NGX_CONFIG"
-else
-  # Create the config file
-  touch "$NGX_CONFIG"
-fi
+USER="$(whoami)"
+
+# Detect OS
+detect_os() {
+  if [[ -f "/etc/arch-release" ]]; then
+    echo "arch"
+  elif [[ -f "/etc/debian_version" ]] || [[ -f "/etc/ubuntu-release" ]]; then
+    echo "debian"
+  else
+    echo "unknown"
+  fi
+}
+
+# Initialize configuration based on OS
+init_config() {
+  local OS_TYPE="$(detect_os)"
+  
+  # Default paths
+  NGX_CONFIG="$HOME/.ngx.conf"
+  NGINX_DIR="/etc/nginx"
+  NGINX_SITES_AVAILABLE="$NGINX_DIR/sites-available"
+  NGINX_SITES_ENABLED="$NGINX_DIR/sites-enabled"
+  VHOSTS="/var/www/vhosts"
+  LOGS="/var/www/log"
+  TEMPLATE_PATH="$NGINX_DIR/_templates"
+  
+  # If the config file exists, load it
+  if [[ -f "$NGX_CONFIG" ]]; then
+    source "$NGX_CONFIG"
+  else
+    # Create the config file
+    touch "$NGX_CONFIG"
+  fi
+  
+  # Handle Arch Linux setup
+  if [[ "$OS_TYPE" == "arch" ]]; then
+    setup_arch_nginx
+  fi
+}
+
+# Setup nginx structure for Arch Linux
+setup_arch_nginx() {
+  # Check if sites-available/sites-enabled directories exist
+  if [[ ! -d "$NGINX_SITES_AVAILABLE" ]] || [[ ! -d "$NGINX_SITES_ENABLED" ]]; then
+    echo "Arch Linux detected. Setting up sites-available/sites-enabled structure..."
+    
+    # Create directories
+    sudo mkdir -p "$NGINX_SITES_AVAILABLE"
+    sudo mkdir -p "$NGINX_SITES_ENABLED"
+    
+    # Check if nginx.conf includes sites-enabled
+    if ! grep -q "sites-enabled" "$NGINX_DIR/nginx.conf"; then
+      # Backup original nginx.conf
+      sudo cp "$NGINX_DIR/nginx.conf" "$NGINX_DIR/nginx.conf.backup.$(date +%Y%m%d_%H%M%S)"
+      
+      # Add include directive for sites-enabled in the http block
+      # Look for the end of the http block and add the include before it
+      if grep -q "^http {" "$NGINX_DIR/nginx.conf"; then
+        # Use a more robust approach to add the include directive
+        sudo awk '
+          /^http {/ { in_http = 1 }
+          /^}$/ && in_http {
+            print "    # Include sites-enabled configurations"
+            print "    include /etc/nginx/sites-enabled/*;"
+            print ""
+            print $0
+            in_http = 0
+            next
+          }
+          { print }
+        ' "$NGINX_DIR/nginx.conf" > /tmp/nginx.conf.tmp && \
+        sudo mv /tmp/nginx.conf.tmp "$NGINX_DIR/nginx.conf"
+      else
+        echo "$(printf_red "Warning: Could not find http block in nginx.conf")"
+        echo "Please manually add the following line to your nginx.conf http block:"
+        echo "    include /etc/nginx/sites-enabled/*;"
+      fi
+      
+      echo "Updated nginx.conf to include sites-enabled configurations"
+      echo "Backup created: $NGINX_DIR/nginx.conf.backup.$(date +%Y%m%d_%H%M%S)"
+    fi
+    
+    # Set appropriate permissions
+    sudo chmod 755 "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
+    
+    echo "Nginx structure setup complete for Arch Linux"
+    echo "You may need to restart nginx for changes to take effect."
+  fi
+}
+
+# Initialize configuration
+init_config
 
 NGX_VERSION=1.3.0
 
@@ -50,6 +128,44 @@ is_enabled() {
   else
     return 1
   fi
+}
+
+# Validate nginx setup
+validate_nginx_setup() {
+  # Check if nginx is installed
+  if ! command -v nginx &> /dev/null; then
+    echo "$(printf_red "Nginx is not installed")"
+    echo "Please install nginx first:"
+    local OS_TYPE="$(detect_os)"
+    
+    if [[ "$OS_TYPE" == "arch" ]]; then
+      echo "  sudo pacman -S nginx"
+    elif [[ "$OS_TYPE" == "debian" ]]; then
+      echo "  sudo apt update && sudo apt install nginx"
+    else
+      echo "  Please install nginx using your distribution's package manager"
+    fi
+    return 1
+  fi
+  
+  # Check if nginx directories exist
+  if [[ ! -d "$NGINX_DIR" ]]; then
+    echo "$(printf_red "Nginx directory not found: $NGINX_DIR")"
+    return 1
+  fi
+  
+  # Ensure sites-available and sites-enabled exist
+  if [[ ! -d "$NGINX_SITES_AVAILABLE" ]] || [[ ! -d "$NGINX_SITES_ENABLED" ]]; then
+    local OS_TYPE="$(detect_os)"
+    if [[ "$OS_TYPE" == "arch" ]]; then
+      setup_arch_nginx
+    else
+      echo "$(printf_red "Sites directories not found. Creating them...")"
+      sudo mkdir -p "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
+    fi
+  fi
+  
+  return 0
 }
 
 check_site_certificate() {
@@ -89,6 +205,11 @@ check_site_certificate() {
 
 # List all the sites in the sites-available directory, and whether they are enabled
 list_sites() {
+  # Validate nginx setup first
+  if ! validate_nginx_setup; then
+    exit 1
+  fi
+  
   local showcert=""
   for param in "$@"; do
     if [[ "$param" == "--certs" ]]; then
@@ -142,27 +263,79 @@ list_sites_raw() {
   done
 }
 
+# Get nginx service command based on OS
+get_service_cmd() {
+  local OS_TYPE="$(detect_os)"
+  
+  if [[ "$OS_TYPE" == "arch" ]]; then
+    # Arch uses systemctl
+    echo "systemctl"
+  else
+    # Debian/Ubuntu may use service or systemctl
+    if command -v systemctl &> /dev/null; then
+      echo "systemctl"
+    else
+      echo "service"
+    fi
+  fi
+}
+
+# Get web server group based on OS
+get_web_group() {
+  local OS_TYPE="$(detect_os)"
+  
+  if [[ "$OS_TYPE" == "arch" ]]; then
+    echo "http"
+  else
+    echo "www-data"
+  fi
+}
+
 start_nginx() {
   echo -e "\033[0;32mstarting nginx...\033[0m"
-  sudo service nginx start
+  local SERVICE_CMD="$(get_service_cmd)"
+  
+  if [[ "$SERVICE_CMD" == "systemctl" ]]; then
+    sudo systemctl start nginx
+  else
+    sudo service nginx start
+  fi
   echo -e "\033[0;32mDone.\033[0m"
 }
 
 restart_nginx() {
   echo -e "\033[0;32mRestarting nginx...\033[0m"
-  sudo service nginx restart
+  local SERVICE_CMD="$(get_service_cmd)"
+  
+  if [[ "$SERVICE_CMD" == "systemctl" ]]; then
+    sudo systemctl restart nginx
+  else
+    sudo service nginx restart
+  fi
   echo -e "\033[0;32mDone.\033[0m"
 }
 
 reload_nginx() {
   echo -e "\033[0;32mReloading nginx...\033[0m"
-  sudo service nginx reload
+  local SERVICE_CMD="$(get_service_cmd)"
+  
+  if [[ "$SERVICE_CMD" == "systemctl" ]]; then
+    sudo systemctl reload nginx
+  else
+    sudo service nginx reload
+  fi
   echo -e "\033[0;32mDone.\033[0m"
 }
 
 stop_nginx() {
   echo -e "\033[0;32mStopping nginx...\033[0m"
-  sudo service nginx stop
+  local SERVICE_CMD="$(get_service_cmd)"
+  
+  if [[ "$SERVICE_CMD" == "systemctl" ]]; then
+    sudo systemctl stop nginx
+  else
+    sudo service nginx stop
+  fi
   echo -e "\033[0;32mDone.\033[0m"
 }
 
@@ -170,12 +343,27 @@ get_ip() {
   echo `hostname -I | awk '{print $1}'`
 }
 
+# Test nginx configuration before reloading
+test_nginx_config() {
+  if ! sudo nginx -t &> /dev/null; then
+    echo "$(printf_red "Nginx configuration test failed!")"
+    echo "Please fix the configuration errors before proceeding."
+    echo "Run 'sudo nginx -t' to see the specific errors."
+    return 1
+  fi
+  return 0
+}
+
 # Prompt nginx restart
 prompt_restart() {
   local answer=
   read -p "Restart nginx? [y/N]: " answer
   if [[ $answer == "y" ]]; then
-    restart_nginx
+    if test_nginx_config; then
+      restart_nginx
+    else
+      echo "Restart cancelled due to configuration errors."
+    fi
   fi
 }
 
@@ -183,12 +371,21 @@ prompt_reload() {
   local answer=
   read -p "Reload nginx? [y/N]: " answer
   if [[ $answer == "y" ]]; then
-    reload_nginx
+    if test_nginx_config; then
+      reload_nginx
+    else
+      echo "Reload cancelled due to configuration errors."
+    fi
   fi
 }
 
 # Enable a website configuration
 enable() {
+  # Validate nginx setup first
+  if ! validate_nginx_setup; then
+    exit 1
+  fi
+  
   if [[ -f "$NGINX_SITES_ENABLED/$1" ]]; then
     echo -e "\033[0;31mSite already enabled\033[0m"
   elif [[ -f "$NGINX_SITES_AVAILABLE/$1" ]]; then
@@ -202,6 +399,11 @@ enable() {
 
 # Disable a website configuration
 disable() {
+  # Validate nginx setup first
+  if ! validate_nginx_setup; then
+    exit 1
+  fi
+  
   if [[ ! -f "$NGINX_SITES_ENABLED/$1" ]]; then
     echo -e "\033[0;31mSite already disabled\033[0m"
   elif [[ -f "$NGINX_SITES_ENABLED/$1" ]]; then
@@ -277,6 +479,11 @@ get_log_path() {
 }
 
 generate_site_config() {
+  # Validate nginx setup first
+  if ! validate_nginx_setup; then
+    exit 1
+  fi
+  
   NAME="$1"
   TEMPLATE="$2"
   USE_ONLINE_PARAM="$3"
@@ -363,9 +570,10 @@ generate_site_config() {
   local answer=
   read -p "Create folder in $VHOSTS/$NAME? [y/N]: " answer
   if [[ $answer == "y" ]]; then
+    local WEB_GROUP="$(get_web_group)"
     sudo mkdir -p "$VHOSTS/$NAME"
     sudo chmod 755 "$VHOSTS/$NAME"
-    sudo chown -R $USER:www-data "$VHOSTS/$NAME"
+    sudo chown -R $USER:$WEB_GROUP "$VHOSTS/$NAME"
 
     # Check locally or online for $TEMPLATE/setup.sh
     if [[ -f "$TEMPLATE_SCRIPT" ]]; then
@@ -376,7 +584,7 @@ generate_site_config() {
       echo "<?php phpinfo();" > "$VHOSTS/$NAME/index.php"
       sudo chmod 755 "$VHOSTS/$NAME"
     fi
-    sudo chown -R $USER:www-data "$VHOSTS/$NAME"
+    sudo chown -R $USER:$WEB_GROUP "$VHOSTS/$NAME"
   fi
 
   read -p "Enable? [y/N]: " answer
@@ -711,6 +919,7 @@ show_help() {
   echo "  enable <SITE>                         - Enables the given website"
   echo "  disable <SITE>                        - Disables the given website"
   echo "  status <SITE>                         - Shows the enabled/disabled status of a single website"
+  echo "  system-status                         - Shows nginx and system information"
   echo "  edit <SITE>                           - Begin the editing of a website config and"
   echo "                                          prompt for a reload if changes are made"
   echo "  where <SITE>                          - Displays the full path to a website config"
@@ -736,6 +945,78 @@ show_help() {
   echo "  completions                           - Generates completions for ngx"
   echo "  version                               - Displays the current version of NGX"
   echo "  config                                - Starts the editor in the NGX config at $NGX_CONFIG"
+}
+
+system_status() {
+  echo "$(printf_green "=== NGX System Status ===")"
+  echo
+  
+  # OS Information
+  local OS_TYPE="$(detect_os)"
+  echo "Operating System: $OS_TYPE"
+  
+  # Nginx version and status
+  if command -v nginx &> /dev/null; then
+    echo "Nginx Version: $(nginx -v 2>&1 | grep -oP '(?<=nginx/)\S+')"
+    
+    local SERVICE_CMD="$(get_service_cmd)"
+    if [[ "$SERVICE_CMD" == "systemctl" ]]; then
+      local STATUS="$(systemctl is-active nginx 2>/dev/null || echo 'inactive')"
+      if [[ "$STATUS" == "active" ]]; then
+        echo "Nginx Status: $(printf_green "$STATUS")"
+      else
+        echo "Nginx Status: $(printf_red "$STATUS")"
+      fi
+    else
+      if pgrep nginx > /dev/null; then
+        echo "Nginx Status: $(printf_green "running")"
+      else
+        echo "Nginx Status: $(printf_red "stopped")"
+      fi
+    fi
+  else
+    echo "Nginx: $(printf_red "Not installed")"
+  fi
+  
+  echo
+  echo "Configuration Paths:"
+  echo "  Nginx Dir: $NGINX_DIR"
+  echo "  Sites Available: $NGINX_SITES_AVAILABLE"
+  echo "  Sites Enabled: $NGINX_SITES_ENABLED"
+  echo "  VHosts: $VHOSTS"
+  echo "  Logs: $LOGS"
+  echo "  Templates: $TEMPLATE_PATH"
+  echo "  Web Group: $(get_web_group)"
+  
+  echo
+  echo "Directory Status:"
+  for dir in "$NGINX_DIR" "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED" "$VHOSTS" "$LOGS" "$TEMPLATE_PATH"; do
+    if [[ -d "$dir" ]]; then
+      echo "  $dir: $(printf_green "exists")"
+    else
+      echo "  $dir: $(printf_red "missing")"
+    fi
+  done
+  
+  # Check nginx configuration syntax
+  echo
+  if command -v nginx &> /dev/null; then
+    echo "Configuration Test:"
+    if sudo nginx -t &> /dev/null; then
+      echo "  Nginx config: $(printf_green "valid")"
+    else
+      echo "  Nginx config: $(printf_red "invalid")"
+      echo "  Run 'sudo nginx -t' for details"
+    fi
+    
+    # Check if sites-enabled is included
+    if grep -q "sites-enabled" "$NGINX_DIR/nginx.conf"; then
+      echo "  Sites-enabled inclusion: $(printf_green "configured")"
+    else
+      echo "  Sites-enabled inclusion: $(printf_red "missing")"
+      echo "  Run 'ngx system-status' as root to auto-configure (Arch Linux)"
+    fi
+  fi
 }
 
 # If no arguments are given, list all sites
@@ -889,6 +1170,11 @@ if [[ "$1" == "help" ]]; then
   exit 0
 fi
 
+if [[ "$1" == "system-status" ]]; then
+  system_status
+  exit 0
+fi
+
 if [[ "$1" == "version" ]]; then
   version
   exit 0
@@ -901,7 +1187,7 @@ if [[ "$1" == "completions" ]]; then
   echo "# Completion function
   _ngx_completions() {
     if [ \${#COMP_WORDS[@]} -eq 2 ]; then
-      WORDS=\"list enable disable status edit where root log livelog logpath templates remove new generate cert new start restart reload stop ip update-self help completions version config\"
+      WORDS=\"list enable disable status system-status edit where root log livelog logpath templates remove new generate cert new start restart reload stop ip update-self help completions version config\"
       COMPREPLY=(\$(compgen -W \"\$WORDS\" -- \"\${COMP_WORDS[1]}\"))  
     elif [ \${#COMP_WORDS[@]} -eq 3 ]; then
       COMPREPLY=(\$(compgen -W \"\$(ls \${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available})\" -- \"\${COMP_WORDS[2]}\"))
@@ -926,3 +1212,4 @@ fi
 
 # No command
 echo "Command not found: $1"
+exit 1
