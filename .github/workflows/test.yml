@@ -55,35 +55,3 @@ jobs:
             docker/*.log
             /tmp/ngx-test-*
           retention-days: 7
-          
-  build-test:
-    name: Build Test Images
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Build Debian test image
-        run: |
-          docker build -f docker/Dockerfile.debian -t ngx-test-debian .
-          
-      - name: Build Arch test image
-        run: |
-          docker build -f docker/Dockerfile.arch -t ngx-test-arch .
-          
-      - name: Test image sizes
-        run: |
-          echo "=== Docker Image Sizes ==="
-          docker images | grep ngx-test
-          
-      - name: Basic smoke test - Debian
-        run: |
-          docker run --rm ngx-test-debian ngx version
-          
-      - name: Basic smoke test - Arch
-        run: |
-          docker run --rm ngx-test-arch ngx version
