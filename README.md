@@ -1,5 +1,7 @@
 # NGX Tool Documentation
 
+[![NGX Cross-Platform Tests](https://github.com/LucasionGS/ngx_bash/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/LucasionGS/ngx_bash/actions/workflows/test.yml)
+
 ## Overview
 The NGX tool is a bash script to manage Nginx configurations, sites, and logs. It provides various functionalities such as enabling/disabling sites, viewing logs, generating site configurations, and managing SSL certificates.
 
